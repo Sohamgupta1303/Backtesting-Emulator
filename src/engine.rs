@@ -12,6 +12,9 @@
 //! rather than by convention — see `execution::simulated::SimulatedExecution`
 //! for the mechanism.
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::VecDeque;
 
 use chrono::{DateTime, Utc};

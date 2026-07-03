@@ -21,11 +21,12 @@ use super::ExecutionModel;
 /// a later milestone; only `OrderType::Market` is handled here.
 #[derive(Debug, Default)]
 pub struct SimulatedExecution {
-    /// Orders eligible to fill on the next `on_bar` call.
+    /// Orders eligible to fill on this or a future `on_bar` call.
     resting: VecDeque<OrderEvent>,
     /// Orders submitted since the last `on_bar` call; promoted to
-    /// `resting` at the end of the next `on_bar`, so they wait one full
-    /// bar before becoming eligible.
+    /// `resting` at the *start* of the next `on_bar`, immediately before
+    /// that call's fill scan -- so an order submitted during bar T's
+    /// processing fills at bar T+1's open, never bar T's.
     staged: VecDeque<OrderEvent>,
 }
 
@@ -37,8 +38,14 @@ impl SimulatedExecution {
 
 impl ExecutionModel for SimulatedExecution {
     fn on_bar(&mut self, bar: &MarketEvent) -> Vec<FillEvent> {
-        let fills = self
-            .resting
+        // Orders submitted during the *previous* bar's processing (after
+        // that bar's `on_bar` call already ran) are promoted to resting
+        // now, before this bar's fill scan -- that's what makes them
+        // eligible to fill against *this* bar's open, exactly one bar
+        // after they were submitted.
+        self.resting.extend(self.staged.drain(..));
+
+        self.resting
             .drain(..)
             .map(|order| {
                 let OrderType::Market = order.order_type else {
@@ -54,14 +61,7 @@ impl ExecutionModel for SimulatedExecution {
                     commission: 0.0,
                 }
             })
-            .collect();
-
-        // Orders submitted during the bar that just finished processing
-        // are promoted to resting now, so they'll fill on the *next* call
-        // to `on_bar` (i.e. one full bar of latency), never this one.
-        self.resting.extend(self.staged.drain(..));
-
-        fills
+            .collect()
     }
 
     fn submit(&mut self, order: OrderEvent) {
