@@ -9,6 +9,7 @@
 
 pub mod context;
 pub mod ma_crossover;
+pub mod mean_reversion;
 pub mod momentum;
 mod stats;
 
@@ -17,12 +18,15 @@ mod context_tests;
 #[cfg(test)]
 mod ma_crossover_tests;
 #[cfg(test)]
+mod mean_reversion_tests;
+#[cfg(test)]
 mod momentum_tests;
 #[cfg(test)]
 mod test_support;
 
 pub use context::{RingBuffer, StrategyContext};
 pub use ma_crossover::MaCrossover;
+pub use mean_reversion::MeanReversion;
 pub use momentum::Momentum;
 
 use crate::events::{MarketEvent, SignalEvent};
