@@ -1,13 +1,14 @@
 //! Max drawdown and the Calmar ratio.
 
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 
 use crate::portfolio::EquityPoint;
 
 /// The worst peak-to-trough decline over an equity curve, plus when it
 /// happened and whether (and when) equity recovered back to the prior
 /// peak by the end of the run.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct DrawdownReport {
     /// Magnitude of the decline, as a fraction (e.g. `0.25` = a 25% drop).
     pub max_drawdown: f64,
@@ -69,4 +70,22 @@ pub fn calmar_ratio(cagr: f64, max_drawdown: f64) -> Option<f64> {
         return None;
     }
     Some(cagr / max_drawdown)
+}
+
+/// The drawdown-from-peak at every point in `equity_curve` (not just the
+/// worst one) — one value per bar, as a fraction, always `>= 0.0`. This is
+/// what feeds the drawdown subplot under the equity curve chart.
+pub fn drawdown_series(equity_curve: &[EquityPoint]) -> Vec<f64> {
+    let mut running_peak = f64::MIN;
+    equity_curve
+        .iter()
+        .map(|point| {
+            running_peak = running_peak.max(point.equity);
+            if running_peak > 0.0 {
+                (running_peak - point.equity) / running_peak
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
