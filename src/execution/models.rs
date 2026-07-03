@@ -5,6 +5,7 @@
 //! approximating and where that approximation breaks down — the point of
 //! this whole layer is to be honest about what it does and doesn't model.
 
+use crate::data::types::Bar;
 use crate::events::Side;
 
 /// How much a fill's price moves *against* the trader, relative to a
@@ -100,5 +101,42 @@ impl CommissionModel {
             CommissionModel::PerTradeFlat(fee) => *fee,
             CommissionModel::BpsOfNotional(bps) => quantity * fill_price * (bps / 10_000.0),
         }
+    }
+}
+
+/// How strictly a limit order's trigger condition is checked against a
+/// bar's price range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LimitFillPolicy {
+    /// A buy limit triggers if the bar's *low* reached the limit price or
+    /// below; a sell limit triggers if the bar's *high* reached the limit
+    /// price or above. This is "optimistic" because it assumes that if
+    /// the price merely touched the limit at any point during the bar,
+    /// the order could have been filled there — real order books don't
+    /// guarantee that (the touch might have been instantaneous, with no
+    /// size available at that exact price).
+    #[default]
+    Optimistic,
+    /// Requires the bar's *close* to satisfy the condition instead of the
+    /// intrabar low/high. Stricter and less prone to phantom fills, at
+    /// the cost of triggering fewer, later fills than would likely happen
+    /// in reality.
+    Conservative,
+}
+
+impl LimitFillPolicy {
+    /// The fill price if a limit order for `side` at `limit_price` would
+    /// trigger against `bar` under this policy, or `None` if it wouldn't.
+    /// Always exactly `limit_price` when it triggers — no slippage is
+    /// applied to limit fills, since guaranteeing a price is the entire
+    /// point of a limit order.
+    pub fn fill_price(&self, side: Side, limit_price: f64, bar: &Bar) -> Option<f64> {
+        let triggered = match (side, self) {
+            (Side::Buy, LimitFillPolicy::Optimistic) => bar.low <= limit_price,
+            (Side::Buy, LimitFillPolicy::Conservative) => bar.close <= limit_price,
+            (Side::Sell, LimitFillPolicy::Optimistic) => bar.high >= limit_price,
+            (Side::Sell, LimitFillPolicy::Conservative) => bar.close >= limit_price,
+        };
+        triggered.then_some(limit_price)
     }
 }
