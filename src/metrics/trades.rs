@@ -2,11 +2,13 @@
 //! totals (commission, slippage) — computed from the portfolio's fill and
 //! closed-trade logs.
 
+use serde::Serialize;
+
 use crate::events::{FillEvent, Side};
 use crate::portfolio::ClosedTrade;
 
 /// Aggregate stats over a set of closed trades.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct TradeStats {
     pub number_of_trades: usize,
     /// Fraction of trades with positive realized PnL. `0.0` if there were
