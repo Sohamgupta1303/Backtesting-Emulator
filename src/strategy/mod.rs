@@ -31,3 +31,20 @@ pub trait Strategy {
     /// have been observed.
     fn warmup_bars(&self) -> usize;
 }
+
+/// A strategy that never trades. Used as the CLI's placeholder until
+/// reference strategies land, and as the baseline for the "bars/sec with a
+/// no-op strategy" benchmark in the performance milestone — it isolates
+/// the cost of the event loop itself from any strategy logic.
+#[derive(Debug, Default)]
+pub struct NoOpStrategy;
+
+impl Strategy for NoOpStrategy {
+    fn on_market(&mut self, _event: &MarketEvent, _ctx: &StrategyContext) -> Vec<SignalEvent> {
+        Vec::new()
+    }
+
+    fn warmup_bars(&self) -> usize {
+        0
+    }
+}

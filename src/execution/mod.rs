@@ -1,8 +1,10 @@
 //! The `ExecutionModel` trait: how submitted orders turn into fills.
 //!
-//! Real fill-timing, slippage, commission, and partial-fill logic (the
-//! `simulated` module) lands in milestones 2 and 4. This module currently
-//! defines the trait shape referenced by the engine.
+//! Slippage, commissions, limit orders, and partial fills land in the
+//! execution-realism milestone; [`simulated::SimulatedExecution`] currently
+//! only handles market orders with T+1-open fills.
+
+pub mod simulated;
 
 use crate::events::{FillEvent, MarketEvent, OrderEvent};
 
