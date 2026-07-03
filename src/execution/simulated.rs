@@ -173,6 +173,7 @@ impl ExecutionModel for SimulatedExecution {
                             quantity_filled: fill_qty,
                             fill_price,
                             commission,
+                            reference_price: bar.bar.open,
                         });
                     }
 
@@ -211,6 +212,9 @@ impl ExecutionModel for SimulatedExecution {
                                 quantity_filled: resting.order.quantity,
                                 fill_price,
                                 commission,
+                                // A limit fill never carries slippage, so
+                                // its reference price is its own price.
+                                reference_price: fill_price,
                             });
                         }
                         None => {

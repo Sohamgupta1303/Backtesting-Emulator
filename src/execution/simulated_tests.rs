@@ -65,6 +65,9 @@ fn applies_configured_slippage_and_commission_to_the_fill() {
     assert_eq!(fills[0].fill_price, 201.0);
     // Commission: 10 shares * $0.01/share = $0.10.
     assert_eq!(fills[0].commission, 0.10);
+    // Reference price is the pre-slippage price (bar 2's open): the gap
+    // between it and fill_price is exactly the slippage cost (1.0/share).
+    assert_eq!(fills[0].reference_price, 200.0);
 }
 
 #[test]
@@ -89,6 +92,8 @@ fn optimistic_buy_limit_fills_when_only_the_low_touches_the_price() {
     let fills = execution.on_bar(&ohlc_bar_event(2, 100.0, 101.0, 94.0, 98.0, 1_000.0));
     assert_eq!(fills.len(), 1);
     assert_eq!(fills[0].fill_price, 95.0);
+    // Limit fills never carry slippage: reference price equals fill price.
+    assert_eq!(fills[0].reference_price, 95.0);
 }
 
 #[test]

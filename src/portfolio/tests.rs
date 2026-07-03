@@ -25,6 +25,7 @@ fn fill(day: u32, side: Side, quantity: f64, price: f64, commission: f64) -> Fil
         quantity_filled: quantity,
         fill_price: price,
         commission,
+        reference_price: price, // no slippage modeled in these tests
     }
 }
 
@@ -74,6 +75,48 @@ fn flipping_long_to_short_realizes_pnl_and_opens_fresh_position() {
     assert_eq!(position.quantity, -5.0);
     assert_eq!(position.avg_entry_price, 110.0);
     assert_eq!(position.realized_pnl, 100.0); // 10 shares * $10 gain on the closing leg
+                                              // The flip opens a brand new leg: entry_timestamp resets to the flip's fill.
+    assert_eq!(position.entry_timestamp, Some(ts(2)));
+}
+
+#[test]
+fn every_fill_is_recorded_in_the_fill_log() {
+    let mut portfolio = Portfolio::new(10_000.0);
+    portfolio.apply_fill(&fill(1, Side::Buy, 10.0, 100.0, 1.0));
+    portfolio.apply_fill(&fill(2, Side::Sell, 10.0, 110.0, 1.0));
+
+    assert_eq!(portfolio.fills.len(), 2);
+    assert_eq!(portfolio.fills[0].fill_price, 100.0);
+    assert_eq!(portfolio.fills[1].fill_price, 110.0);
+}
+
+#[test]
+fn closing_a_position_records_a_closed_trade_with_holding_period() {
+    let mut portfolio = Portfolio::new(10_000.0);
+    portfolio.apply_fill(&fill(1, Side::Buy, 10.0, 100.0, 0.0)); // opens: entry_timestamp = day 1
+    portfolio.apply_fill(&fill(5, Side::Sell, 10.0, 110.0, 0.0)); // closes on day 5
+
+    assert_eq!(portfolio.closed_trades.len(), 1);
+    let trade = &portfolio.closed_trades[0];
+    assert_eq!(trade.entry_timestamp, ts(1));
+    assert_eq!(trade.exit_timestamp, ts(5));
+    assert_eq!(trade.quantity, 10.0);
+    assert_eq!(trade.realized_pnl, 100.0);
+}
+
+#[test]
+fn entry_timestamp_is_none_while_flat_and_set_on_reopening() {
+    let mut portfolio = Portfolio::new(10_000.0);
+    assert_eq!(portfolio.position(&symbol()).entry_timestamp, None);
+
+    portfolio.apply_fill(&fill(1, Side::Buy, 10.0, 100.0, 0.0));
+    assert_eq!(portfolio.position(&symbol()).entry_timestamp, Some(ts(1)));
+
+    portfolio.apply_fill(&fill(2, Side::Sell, 10.0, 100.0, 0.0)); // closes fully -> flat
+    assert_eq!(portfolio.position(&symbol()).entry_timestamp, None);
+
+    portfolio.apply_fill(&fill(3, Side::Buy, 5.0, 100.0, 0.0)); // reopens
+    assert_eq!(portfolio.position(&symbol()).entry_timestamp, Some(ts(3)));
 }
 
 #[test]
