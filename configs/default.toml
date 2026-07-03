@@ -1,0 +1,20 @@
+initial_capital = 50000.0
+
+[sizing]
+fraction = 0.20
+
+[execution]
+limit_fill_policy = "conservative"
+latency_bars = 1
+
+[execution.slippage]
+model = "fixed_bps"
+bps = 5.0
+
+[execution.commission]
+model = "per_share"
+rate = 0.005
+
+[strategy]
+fast = 5
+slow = 20
