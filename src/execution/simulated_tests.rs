@@ -141,6 +141,81 @@ fn limit_order_rests_across_multiple_bars_until_triggered() {
 }
 
 #[test]
+fn volume_impact_partially_fills_and_rests_the_remainder() {
+    let mut execution = SimulatedExecution::new().with_slippage(SlippageModel::VolumeImpact {
+        participation_limit: 0.1,
+        impact_coefficient: 0.0, // isolate the partial-fill mechanic from price impact
+    });
+    execution.on_bar(&bar_event(1, 100.0, 1_000.0));
+    execution.submit(market_order(200.0, Side::Buy));
+
+    // Bar 2: volume 1,000 -> cap = 10% * 1,000 = 100. The order wants 200,
+    // so only 100 fills now; the remaining 100 keeps resting.
+    let fills = execution.on_bar(&bar_event(2, 150.0, 1_000.0));
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].quantity_filled, 100.0);
+    assert_eq!(fills[0].fill_price, 150.0); // no price impact configured
+
+    // Bar 3: much higher volume -> the remaining 100 easily fits under
+    // the new cap, and fills in full.
+    let fills = execution.on_bar(&bar_event(3, 160.0, 10_000.0));
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].quantity_filled, 100.0);
+    assert_eq!(fills[0].fill_price, 160.0);
+}
+
+#[test]
+fn time_in_force_cancels_a_limit_order_that_never_fills() {
+    let mut execution = SimulatedExecution::new().with_time_in_force(2);
+    execution.on_bar(&bar_event(1, 100.0, 1_000.0));
+    execution.submit(limit_order(10.0, Side::Buy, 50.0)); // far below where price ever trades
+
+    // Two eligible bars where the limit is never reached: two attempts,
+    // no fill either time.
+    assert!(execution
+        .on_bar(&ohlc_bar_event(2, 100.0, 102.0, 90.0, 95.0, 1_000.0))
+        .is_empty());
+    assert!(execution
+        .on_bar(&ohlc_bar_event(3, 95.0, 97.0, 90.0, 93.0, 1_000.0))
+        .is_empty());
+
+    // Third eligible bar: time-in-force (2) has now elapsed -- the order
+    // is cancelled here, even though it never triggered.
+    assert!(execution
+        .on_bar(&ohlc_bar_event(4, 93.0, 95.0, 88.0, 90.0, 1_000.0))
+        .is_empty());
+
+    // Proof it's really gone, not just still waiting: even though this
+    // bar's low finally reaches the limit price, nothing fills.
+    assert!(execution
+        .on_bar(&ohlc_bar_event(5, 90.0, 91.0, 40.0, 45.0, 1_000.0))
+        .is_empty());
+}
+
+#[test]
+fn time_in_force_also_cancels_an_unfilled_partial_fill_remainder() {
+    let mut execution = SimulatedExecution::new()
+        .with_slippage(SlippageModel::VolumeImpact {
+            participation_limit: 0.1,
+            impact_coefficient: 0.0,
+        })
+        .with_time_in_force(1);
+    execution.on_bar(&bar_event(1, 100.0, 1_000.0));
+    execution.submit(market_order(200.0, Side::Buy));
+
+    // Bar 2: partially fills 100 of 200 (cap = 10% of 1,000 volume). The
+    // remainder of 100 keeps resting, inheriting the clock -- it's
+    // already used its one allotted wait.
+    let fills = execution.on_bar(&bar_event(2, 150.0, 1_000.0));
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].quantity_filled, 100.0);
+
+    // Bar 3: time_in_force(1) has now elapsed for the remainder -- it's
+    // cancelled here rather than partially filling again.
+    assert!(execution.on_bar(&bar_event(3, 160.0, 1_000.0)).is_empty());
+}
+
+#[test]
 fn latency_delays_eligibility_beyond_the_built_in_one_bar() {
     let mut execution = SimulatedExecution::new().with_latency_bars(2);
     execution.on_bar(&bar_event(1, 100.0, 1_000.0));
