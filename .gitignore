@@ -4,3 +4,6 @@ backtest-engine-spec.md
 # Added by cargo
 
 /target
+
+# Generated report output (equity_curve.png, results.json)
+/report
