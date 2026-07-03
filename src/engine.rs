@@ -15,15 +15,16 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
 
+use crate::data::types::SymbolId;
 use crate::data::DataFeed;
 use crate::events::{Event, OrderId};
 use crate::execution::ExecutionModel;
 use crate::portfolio::{Portfolio, SizingModel};
-use crate::strategy::{Strategy, StrategyContext};
+use crate::strategy::{RingBuffer, Strategy, StrategyContext};
 
 /// Tracks simulated "now." Enforces the core anti-lookahead invariant at
 /// the clock level: time may only move forward. Any attempt to move it
@@ -81,6 +82,11 @@ pub struct Engine {
     clock: SimClock,
     bars_seen: usize,
     next_order_id: OrderId,
+    /// One ring buffer of recent bars per symbol, sized to exactly how
+    /// much history the strategy says it needs (`warmup_bars()`). This is
+    /// what `StrategyContext::history` is built from every bar.
+    history: HashMap<SymbolId, RingBuffer>,
+    history_capacity: usize,
 }
 
 impl Engine {
@@ -91,6 +97,7 @@ impl Engine {
         execution: Box<dyn ExecutionModel>,
         initial_cash: f64,
     ) -> Self {
+        let history_capacity = strategy.warmup_bars().max(1);
         Self {
             queue: VecDeque::new(),
             data_feed,
@@ -101,6 +108,8 @@ impl Engine {
             clock: SimClock::new(),
             bars_seen: 0,
             next_order_id: 1,
+            history: HashMap::new(),
+            history_capacity,
         }
     }
 
@@ -128,10 +137,22 @@ impl Engine {
                 self.queue.push_back(Event::Fill(fill));
             }
 
-            // Step 2: dispatch this bar to the strategy. Signals are
-            // suppressed (dropped, not merely delayed) until warmup is
-            // satisfied, per `Strategy::warmup_bars`.
-            let ctx = StrategyContext::default();
+            // Step 2: dispatch this bar to the strategy. The ring buffer
+            // for this symbol is updated *before* building the context, so
+            // `ctx.history` ends with (and includes) the current bar --
+            // never anything beyond it. Signals are suppressed (dropped,
+            // not merely delayed) until warmup is satisfied, per
+            // `Strategy::warmup_bars`.
+            let buffer = self
+                .history
+                .entry(market_event.symbol.clone())
+                .or_insert_with(|| RingBuffer::new(self.history_capacity));
+            buffer.push(market_event.bar);
+            let ctx = StrategyContext {
+                history: buffer.as_vec(),
+                position_quantity: self.portfolio.position(&market_event.symbol).quantity,
+                cash: self.portfolio.cash,
+            };
             let signals = self.strategy.on_market(&market_event, &ctx);
             if self.bars_seen > self.strategy.warmup_bars() {
                 for signal in signals {
