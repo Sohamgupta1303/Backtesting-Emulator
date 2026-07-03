@@ -1,4 +1,5 @@
-//! `SimulatedExecution`: market-order-only fills at the next bar's open.
+//! `SimulatedExecution`: market-order-only fills at the next bar's open,
+//! with configurable slippage and commission.
 //!
 //! This is where the engine's central anti-lookahead guarantee is
 //! mechanically enforced. An order submitted while processing bar T is
@@ -7,18 +8,20 @@
 //! makes with bar T+1. There is no code path here that can fill an order
 //! against the bar that produced it.
 //!
-//! Slippage, commissions, limit orders, latency beyond the T+1 rule, and
-//! partial fills are added in the execution-realism milestone.
+//! Limit orders, latency beyond the T+1 rule, and partial fills are added
+//! later in the execution-realism milestone.
 
 use std::collections::VecDeque;
 
 use crate::events::{FillEvent, MarketEvent, OrderEvent, OrderType};
 
+use super::models::{CommissionModel, SlippageModel};
 use super::ExecutionModel;
 
 /// Fills market orders at the open of the bar *after* the one they were
-/// submitted during. Limit orders and slippage/commission models land in
-/// a later milestone; only `OrderType::Market` is handled here.
+/// submitted during, applying the configured slippage and commission
+/// models. Limit orders are not yet implemented; only `OrderType::Market`
+/// is handled here.
 #[derive(Debug, Default)]
 pub struct SimulatedExecution {
     /// Orders eligible to fill on this or a future `on_bar` call.
@@ -28,11 +31,25 @@ pub struct SimulatedExecution {
     /// that call's fill scan -- so an order submitted during bar T's
     /// processing fills at bar T+1's open, never bar T's.
     staged: VecDeque<OrderEvent>,
+    slippage: SlippageModel,
+    commission: CommissionModel,
 }
 
 impl SimulatedExecution {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Configures the slippage model. Defaults to [`SlippageModel::None`].
+    pub fn with_slippage(mut self, model: SlippageModel) -> Self {
+        self.slippage = model;
+        self
+    }
+
+    /// Configures the commission model. Defaults to a zero flat fee.
+    pub fn with_commission(mut self, model: CommissionModel) -> Self {
+        self.commission = model;
+        self
     }
 }
 
@@ -51,14 +68,21 @@ impl ExecutionModel for SimulatedExecution {
                 let OrderType::Market = order.order_type else {
                     unreachable!("limit orders are not implemented until a later milestone")
                 };
+                let fill_price = self.slippage.adjusted_price(
+                    bar.bar.open,
+                    order.side,
+                    order.quantity,
+                    bar.bar.volume,
+                );
+                let commission = self.commission.commission(order.quantity, fill_price);
                 FillEvent {
                     order_id: order.id,
                     symbol: order.symbol,
                     timestamp: bar.bar.timestamp,
                     side: order.side,
                     quantity_filled: order.quantity,
-                    fill_price: bar.bar.open,
-                    commission: 0.0,
+                    fill_price,
+                    commission,
                 }
             })
             .collect()

@@ -4,7 +4,13 @@
 //! execution-realism milestone; [`simulated::SimulatedExecution`] currently
 //! only handles market orders with T+1-open fills.
 
+pub mod models;
 pub mod simulated;
+
+#[cfg(test)]
+mod models_tests;
+#[cfg(test)]
+mod simulated_tests;
 
 use crate::events::{FillEvent, MarketEvent, OrderEvent};
 
