@@ -84,4 +84,11 @@ pub struct FillEvent {
     pub quantity_filled: Quantity,
     pub fill_price: Price,
     pub commission: f64,
+    /// The price this fill would have happened at with zero slippage
+    /// (a market fill's bar open; a limit fill's own limit price, since
+    /// limit fills never carry slippage). `fill_price - reference_price`
+    /// (signed by side) is exactly the slippage cost of this one fill —
+    /// this is what lets metrics report slippage cost as its own line
+    /// item, separate from commission.
+    pub reference_price: Price,
 }
