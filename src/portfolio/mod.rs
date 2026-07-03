@@ -20,6 +20,22 @@ pub struct Position {
     pub quantity: Quantity,
     pub avg_entry_price: Price,
     pub realized_pnl: f64,
+    /// When the *current* leg of exposure began (reset whenever the
+    /// position opens from flat or flips through zero). Used to compute
+    /// holding period for trade-level metrics; `None` while flat.
+    pub entry_timestamp: Option<DateTime<Utc>>,
+}
+
+/// One completed (fully or partially) closing fill: the realized PnL from
+/// reducing, closing, or flipping a position, with enough context to
+/// compute trade-level stats (win rate, average holding period, etc.).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosedTrade {
+    pub symbol: SymbolId,
+    pub entry_timestamp: DateTime<Utc>,
+    pub exit_timestamp: DateTime<Utc>,
+    pub quantity: Quantity,
+    pub realized_pnl: f64,
 }
 
 /// One point on the equity curve, recorded once per bar after the event
@@ -42,6 +58,12 @@ pub struct Portfolio {
     pub positions: HashMap<SymbolId, Position>,
     pub last_prices: HashMap<SymbolId, Price>,
     pub equity_curve: Vec<EquityPoint>,
+    /// Every fill ever applied, in order — the full trade log, used by
+    /// metrics to total commissions/slippage paid.
+    pub fills: Vec<FillEvent>,
+    /// Every completed (fully or partially) closing fill, used by
+    /// metrics for trade-level stats (win rate, profit factor, etc.).
+    pub closed_trades: Vec<ClosedTrade>,
 }
 
 impl Portfolio {
@@ -51,6 +73,8 @@ impl Portfolio {
             positions: HashMap::new(),
             last_prices: HashMap::new(),
             equity_curve: Vec::new(),
+            fills: Vec::new(),
+            closed_trades: Vec::new(),
         }
     }
 
@@ -122,8 +146,11 @@ impl Portfolio {
     /// weighted-average-cost accounting. Handles opening, adding to,
     /// reducing, closing, and flipping (long-to-short or vice versa) a
     /// position, realizing PnL on whatever portion of the fill closes
-    /// existing exposure.
+    /// existing exposure. Also appends to the fill log and, for any
+    /// closing portion, to `closed_trades`.
     pub fn apply_fill(&mut self, fill: &FillEvent) {
+        self.fills.push(fill.clone());
+
         let signed_quantity = match fill.side {
             Side::Buy => fill.quantity_filled,
             Side::Sell => -fill.quantity_filled,
@@ -150,6 +177,10 @@ impl Portfolio {
             } else {
                 0.0
             };
+            if old_quantity == 0.0 {
+                // Opening a fresh position from flat: a new leg begins now.
+                position.entry_timestamp = Some(fill.timestamp);
+            }
         } else {
             // Reducing, closing, or flipping through zero: realize PnL on
             // whatever portion of the fill closes existing exposure.
@@ -159,14 +190,26 @@ impl Portfolio {
             } else {
                 position.avg_entry_price - fill.fill_price
             };
-            position.realized_pnl += pnl_per_share * closing_quantity;
+            let closed_pnl = pnl_per_share * closing_quantity;
+            position.realized_pnl += closed_pnl;
+
+            let entry_timestamp = position.entry_timestamp.unwrap_or(fill.timestamp);
+            self.closed_trades.push(ClosedTrade {
+                symbol: fill.symbol.clone(),
+                entry_timestamp,
+                exit_timestamp: fill.timestamp,
+                quantity: closing_quantity,
+                realized_pnl: closed_pnl,
+            });
 
             if new_quantity == 0.0 {
                 position.avg_entry_price = 0.0;
+                position.entry_timestamp = None;
             } else if new_quantity.signum() != old_quantity.signum() {
                 // Flipped past zero: the leftover quantity opens a fresh
-                // position at this fill's price.
+                // position at this fill's price and timestamp.
                 position.avg_entry_price = fill.fill_price;
+                position.entry_timestamp = Some(fill.timestamp);
             }
         }
         position.quantity = new_quantity;
