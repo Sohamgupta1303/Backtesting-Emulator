@@ -8,11 +8,22 @@
 //! milestone — that reaches into data the engine hasn't emitted yet.
 
 pub mod context;
+pub mod ma_crossover;
+pub mod momentum;
+mod stats;
 
 #[cfg(test)]
 mod context_tests;
+#[cfg(test)]
+mod ma_crossover_tests;
+#[cfg(test)]
+mod momentum_tests;
+#[cfg(test)]
+mod test_support;
 
 pub use context::{RingBuffer, StrategyContext};
+pub use ma_crossover::MaCrossover;
+pub use momentum::Momentum;
 
 use crate::events::{MarketEvent, SignalEvent};
 

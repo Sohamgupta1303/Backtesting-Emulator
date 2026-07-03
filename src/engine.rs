@@ -154,7 +154,12 @@ impl Engine {
                 cash: self.portfolio.cash,
             };
             let signals = self.strategy.on_market(&market_event, &ctx);
-            if self.bars_seen > self.strategy.warmup_bars() {
+            // "warmup_bars() == 50" means the strategy needs 50 bars of
+            // history to work with, i.e. it's ready as soon as 50 bars
+            // have been seen -- hence `>=`, not `>`. Getting this backward
+            // would silently delay every real strategy's first signal by
+            // one full bar.
+            if self.bars_seen >= self.strategy.warmup_bars() {
                 for signal in signals {
                     self.queue.push_back(Event::Signal(signal));
                 }
