@@ -1,5 +1,6 @@
 //! `SimulatedExecution`: market and limit order fills, with configurable
-//! slippage, commission, latency, and limit-fill strictness.
+//! slippage, commission, latency, limit-fill strictness, partial fills,
+//! and time-in-force.
 //!
 //! This is where the engine's central anti-lookahead guarantee is
 //! mechanically enforced. An order submitted while processing bar T is
@@ -8,9 +9,6 @@
 //! makes with bar T+1. There is no code path here that can fill an order
 //! against the bar that produced it. `latency_bars` adds further delay
 //! *on top of* that built-in one bar.
-//!
-//! Partial fills and time-in-force (expiring a resting order after N bars)
-//! are added later in the execution-realism milestone.
 
 use std::collections::VecDeque;
 
@@ -19,12 +17,14 @@ use crate::events::{FillEvent, MarketEvent, OrderEvent, OrderType};
 use super::models::{CommissionModel, LimitFillPolicy, SlippageModel};
 use super::ExecutionModel;
 
-/// An order waiting to fill, plus how many more bars must pass (beyond
-/// the built-in one) before it's even eligible to try.
+/// An order waiting to fill: how many more bars must pass (beyond the
+/// built-in one) before it's even eligible to try, and how many bars
+/// it's already been eligible-but-unfilled for (for time-in-force).
 #[derive(Debug, Clone)]
 struct RestingOrder {
     order: OrderEvent,
     bars_remaining: u32,
+    bars_waited: u32,
 }
 
 /// Fills orders against bar data. Market orders fill at the open of the
@@ -32,6 +32,13 @@ struct RestingOrder {
 /// Limit orders become eligible the same way, then wait — potentially
 /// across many further bars — until the bar's price range satisfies the
 /// limit under the configured [`LimitFillPolicy`].
+///
+/// Under [`SlippageModel::VolumeImpact`], an order larger than
+/// `participation_limit * bar_volume` only fills that much this bar; the
+/// remaining quantity keeps resting as its own order (subject to the same
+/// time-in-force clock). Partial fills only happen under `VolumeImpact` —
+/// `None` and `FixedBps` always fill an order's full size in one shot,
+/// since neither models any notion of available volume.
 #[derive(Debug, Default)]
 pub struct SimulatedExecution {
     /// Orders that have cleared latency and are actively checked for a
@@ -50,6 +57,10 @@ pub struct SimulatedExecution {
     /// for a fill, on top of the built-in one-bar minimum. Zero by
     /// default.
     latency_bars: u32,
+    /// If set, an order that has been eligible for this many bars without
+    /// (fully) filling is cancelled rather than left resting forever.
+    /// `None` (the default) means rest indefinitely.
+    time_in_force_bars: Option<u32>,
 }
 
 impl SimulatedExecution {
@@ -82,6 +93,33 @@ impl SimulatedExecution {
         self.latency_bars = bars;
         self
     }
+
+    /// Configures time-in-force: an order still resting unfilled after
+    /// this many eligible bars is cancelled. Defaults to no expiry.
+    pub fn with_time_in_force(mut self, bars: u32) -> Self {
+        self.time_in_force_bars = Some(bars);
+        self
+    }
+
+    /// Splits `quantity` into (fillable now, remaining to keep resting)
+    /// under the configured slippage model. Only `VolumeImpact` caps
+    /// participation; every other model fills the full amount.
+    fn split_for_volume_cap(&self, quantity: f64, bar_volume: f64) -> (f64, f64) {
+        match self.slippage {
+            SlippageModel::VolumeImpact {
+                participation_limit,
+                ..
+            } => {
+                let cap = (participation_limit * bar_volume).max(0.0);
+                if quantity <= cap {
+                    (quantity, 0.0)
+                } else {
+                    (cap, quantity - cap)
+                }
+            }
+            SlippageModel::None | SlippageModel::FixedBps(_) => (quantity, 0.0),
+        }
+    }
 }
 
 impl ExecutionModel for SimulatedExecution {
@@ -90,6 +128,7 @@ impl ExecutionModel for SimulatedExecution {
             self.resting.push_back(RestingOrder {
                 order,
                 bars_remaining: self.latency_bars,
+                bars_waited: 0,
             });
         }
 
@@ -103,45 +142,86 @@ impl ExecutionModel for SimulatedExecution {
                 continue;
             }
 
-            let base_price = match resting.order.order_type {
-                OrderType::Market => Some(bar.bar.open),
-                OrderType::Limit { price } => {
-                    self.limit_fill_policy
-                        .fill_price(resting.order.side, price, &bar.bar)
+            if let Some(tif) = self.time_in_force_bars {
+                if resting.bars_waited >= tif {
+                    eprintln!(
+                        "warning: order {} expired (time-in-force) without filling",
+                        resting.order.id
+                    );
+                    continue; // cancelled: dropped, not re-queued
                 }
-            };
+            }
 
-            let Some(base_price) = base_price else {
-                // Latency has cleared but the limit condition hasn't
-                // triggered yet -- keep waiting, indefinitely for now
-                // (time-in-force expiry lands later in this milestone).
-                still_resting.push_back(resting);
-                continue;
-            };
+            match resting.order.order_type {
+                OrderType::Market => {
+                    let (fill_qty, remainder_qty) =
+                        self.split_for_volume_cap(resting.order.quantity, bar.bar.volume);
 
-            let order = resting.order;
-            let fill_price = match order.order_type {
-                OrderType::Market => self.slippage.adjusted_price(
-                    base_price,
-                    order.side,
-                    order.quantity,
-                    bar.bar.volume,
-                ),
-                // No slippage on limit fills: guaranteeing a price is the
-                // entire point of a limit order.
-                OrderType::Limit { .. } => base_price,
-            };
-            let commission = self.commission.commission(order.quantity, fill_price);
+                    if fill_qty > 0.0 {
+                        let fill_price = self.slippage.adjusted_price(
+                            bar.bar.open,
+                            resting.order.side,
+                            fill_qty,
+                            bar.bar.volume,
+                        );
+                        let commission = self.commission.commission(fill_qty, fill_price);
+                        fills.push(FillEvent {
+                            order_id: resting.order.id,
+                            symbol: resting.order.symbol.clone(),
+                            timestamp: bar.bar.timestamp,
+                            side: resting.order.side,
+                            quantity_filled: fill_qty,
+                            fill_price,
+                            commission,
+                        });
+                    }
 
-            fills.push(FillEvent {
-                order_id: order.id,
-                symbol: order.symbol,
-                timestamp: bar.bar.timestamp,
-                side: order.side,
-                quantity_filled: order.quantity,
-                fill_price,
-                commission,
-            });
+                    if remainder_qty > 0.0 {
+                        // The remainder inherits (rather than resets) the
+                        // original order's time-in-force clock: a partial
+                        // fill is progress, not a fresh start, so it
+                        // doesn't buy the remainder extra patience.
+                        still_resting.push_back(RestingOrder {
+                            order: OrderEvent {
+                                quantity: remainder_qty,
+                                ..resting.order
+                            },
+                            bars_remaining: 0,
+                            bars_waited: resting.bars_waited + 1,
+                        });
+                    }
+                }
+                OrderType::Limit { price } => {
+                    match self
+                        .limit_fill_policy
+                        .fill_price(resting.order.side, price, &bar.bar)
+                    {
+                        // No slippage on limit fills, and no partial fills
+                        // either: guaranteeing a price and size is the
+                        // entire point of a limit order.
+                        Some(fill_price) => {
+                            let commission = self
+                                .commission
+                                .commission(resting.order.quantity, fill_price);
+                            fills.push(FillEvent {
+                                order_id: resting.order.id,
+                                symbol: resting.order.symbol,
+                                timestamp: bar.bar.timestamp,
+                                side: resting.order.side,
+                                quantity_filled: resting.order.quantity,
+                                fill_price,
+                                commission,
+                            });
+                        }
+                        None => {
+                            still_resting.push_back(RestingOrder {
+                                bars_waited: resting.bars_waited + 1,
+                                ..resting
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         self.resting = still_resting;
