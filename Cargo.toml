@@ -22,3 +22,13 @@ thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "area_series", "ttf"] }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "engine_throughput"
+harness = false
+
+[profile.release]
+debug = true
