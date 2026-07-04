@@ -29,6 +29,3 @@ criterion = "0.5"
 [[bench]]
 name = "engine_throughput"
 harness = false
-
-[profile.release]
-debug = true

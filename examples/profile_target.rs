@@ -53,7 +53,10 @@ fn main() {
         let symbol = SymbolId::new("PROFILE");
         let feed = VecFeed(
             bars.iter()
-                .map(|bar| MarketEvent { symbol: symbol.clone(), bar: *bar })
+                .map(|bar| MarketEvent {
+                    symbol: symbol.clone(),
+                    bar: *bar,
+                })
                 .collect(),
         );
         let mut engine = Engine::new(
@@ -64,6 +67,9 @@ fn main() {
             100_000.0,
         );
         let summary = engine.run();
-        println!("round {round}: {} bars, {} fills", summary.market_events, summary.fills);
+        println!(
+            "round {round}: {} bars, {} fills",
+            summary.market_events, summary.fills
+        );
     }
 }

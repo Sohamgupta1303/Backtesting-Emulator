@@ -54,7 +54,10 @@ fn build_engine(bars: &[Bar], strategy: Box<dyn Strategy>) -> Engine {
     let symbol = SymbolId::new("BENCH");
     let feed = VecFeed(
         bars.iter()
-            .map(|bar| MarketEvent { symbol: symbol.clone(), bar: *bar })
+            .map(|bar| MarketEvent {
+                symbol: symbol.clone(),
+                bar: *bar,
+            })
             .collect(),
     );
     Engine::new(

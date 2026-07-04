@@ -15,11 +15,11 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 use chrono::{DateTime, Utc};
 
-use crate::data::types::SymbolId;
+use crate::data::fast_hash::SymbolMap;
 use crate::data::DataFeed;
 use crate::events::{Event, OrderId};
 use crate::execution::ExecutionModel;
@@ -85,7 +85,7 @@ pub struct Engine {
     /// One ring buffer of recent bars per symbol, sized to exactly how
     /// much history the strategy says it needs (`warmup_bars()`). This is
     /// what `StrategyContext::history` is built from every bar.
-    history: HashMap<SymbolId, RingBuffer>,
+    history: SymbolMap<RingBuffer>,
     history_capacity: usize,
 }
 
@@ -108,7 +108,7 @@ impl Engine {
             clock: SimClock::new(),
             bars_seen: 0,
             next_order_id: 1,
-            history: HashMap::new(),
+            history: SymbolMap::default(),
             history_capacity,
         }
     }

@@ -1,4 +1,5 @@
 pub mod csv_feed;
+pub mod fast_hash;
 pub mod types;
 
 #[cfg(test)]

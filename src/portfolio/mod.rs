@@ -6,10 +6,9 @@ pub mod sizing;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
 
+use crate::data::fast_hash::SymbolMap;
 use crate::data::types::{Price, Quantity, SymbolId};
 use crate::events::{FillEvent, OrderEvent, Side, SignalEvent};
 
@@ -55,8 +54,8 @@ pub struct EquityPoint {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Portfolio {
     pub cash: f64,
-    pub positions: HashMap<SymbolId, Position>,
-    pub last_prices: HashMap<SymbolId, Price>,
+    pub positions: SymbolMap<Position>,
+    pub last_prices: SymbolMap<Price>,
     pub equity_curve: Vec<EquityPoint>,
     /// Every fill ever applied, in order — the full trade log, used by
     /// metrics to total commissions/slippage paid.
@@ -70,8 +69,8 @@ impl Portfolio {
     pub fn new(initial_cash: f64) -> Self {
         Self {
             cash: initial_cash,
-            positions: HashMap::new(),
-            last_prices: HashMap::new(),
+            positions: SymbolMap::default(),
+            last_prices: SymbolMap::default(),
             equity_curve: Vec::new(),
             fills: Vec::new(),
             closed_trades: Vec::new(),
