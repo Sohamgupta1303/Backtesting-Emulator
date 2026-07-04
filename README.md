@@ -1,4 +1,4 @@
-# chronos-bt
+# Backtesting Emulator
 
 An event-driven backtesting engine, written in Rust, built around one idea:
 **a strategy should be structurally incapable of seeing the future.** Most
